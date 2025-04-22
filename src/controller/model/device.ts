@@ -945,6 +945,8 @@ export class Device extends Entity<ControllerEventMap> {
     private async interviewKeusDevice(ignoreCache: boolean): Promise<void> {
         const keusEndPoint = KEUS_ENDPOINTS_MAP[this._manufacturerID!];
         
+        logger.debug(`Interviewing Keus device ${this.ieeeAddr}`, NS);
+
         try {
             const clusterId = Zdo.ClusterId.SIMPLE_DESCRIPTOR_REQUEST;
             const zdoPayload = Zdo.Buffalo.buildRequest(Entity.adapter!.hasZdoMessageOverhead, clusterId, this.networkAddress, keusEndPoint);
@@ -1019,6 +1021,7 @@ export class Device extends Entity<ControllerEventMap> {
             await this.interviewKeusDevice(ignoreCache);
             return;
         } else {
+            logger.debug(`Not a Keus device, manufacturer ID: ${this.manufacturerID}`, NS);
             this._isKeusDevice = false;
         }
 

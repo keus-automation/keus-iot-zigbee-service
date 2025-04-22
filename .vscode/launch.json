@@ -6,6 +6,7 @@
             "request": "launch",
             "name": "Debug join-and-log.js",
             "program": "${workspaceFolder}/examples/join-and-log.js",
+            "preLaunchTask": "build",
             "skipFiles": [
                 "<node_internals>/**"
             ],

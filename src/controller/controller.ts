@@ -313,6 +313,7 @@ export class Controller extends events.EventEmitter<ControllerEventMap> {
             }, timeMs);
 
             this.emit('permitJoinChanged', {permitted: true, time});
+            logger.debug('Permit joining for ' + time + ' seconds', NS);
         } else {
             logger.debug('Disable joining', NS);
 
@@ -757,7 +758,7 @@ export class Controller extends events.EventEmitter<ControllerEventMap> {
         if (!device) {
             logger.debug(`New device '${payload.ieeeAddr}' joined`, NS);
             logger.debug(`Creating device '${payload.ieeeAddr}'`, NS);
-            device = Device.create('Unknown', payload.ieeeAddr, payload.networkAddress, undefined, undefined, undefined, undefined, false, undefined);
+            device = Device.create('Unknown', payload.ieeeAddr, payload.networkAddress, undefined, undefined, undefined, undefined, false, undefined, false);
             this.selfAndDeviceEmit(device, 'deviceJoined', {device});
         } else if (device.isDeleted) {
             logger.debug(`Deleted device '${payload.ieeeAddr}' joined, undeleting`, NS);
