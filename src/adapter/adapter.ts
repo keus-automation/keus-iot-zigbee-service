@@ -184,6 +184,16 @@ export abstract class Adapter extends events.EventEmitter<AdapterEventMap> {
     public abstract sendZclFrameInterPANBroadcast(zclFrame: Zcl.Frame, timeout: number): Promise<AdapterEvents.ZclPayload>;
 
     public abstract restoreChannelInterPAN(): Promise<void>;
+
+    /**
+     * Force remove a device from the network
+     * This is adapter-specific implementation that removes the device from internal adapter tables.
+     * @param ieeeAddr IEEE address of the device to remove
+     * @returns Promise that resolves when the device is removed
+     */
+    public async forceRemoveDevice(ieeeAddr: string): Promise<void> {
+        throw new Error('Force remove not supported by this adapter');
+    }
 }
 
 export default Adapter;

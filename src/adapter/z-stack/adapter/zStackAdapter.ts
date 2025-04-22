@@ -908,6 +908,50 @@ export class ZStackAdapter extends Adapter {
         return await this.adapterManager.backup.createBackup(ieeeAddressesInDatabase);
     }
 
+    /**
+     * Force remove a device from the network
+     * This removes the device from link key table, security device table, and association table
+     * @param ieeeAddr IEEE address of the device to remove
+     */
+    public override async forceRemoveDevice(ieeeAddr: string): Promise<void> {
+        return await this.queue.execute(async () => {
+            this.checkInterpanLock();
+            
+            try {
+                logger.debug(`Force removing device ${ieeeAddr} from network`, NS);
+                
+                // Remove device from link key table
+                try {
+                    const resultRemoveLinkKey = await this.znp.request(Subsystem.ZDO, 'removeLinkKey', { ieeeaddr: ieeeAddr });
+                    logger.debug(`Removed device link key for ${ieeeAddr}: ${JSON.stringify(resultRemoveLinkKey)}`, NS);
+                } catch (error) {
+                    logger.debug(`Failed to remove link key for ${ieeeAddr}: ${error}`, NS);
+                }
+                
+                // Remove device from security device table
+                try {
+                    const resultSecDeviceRemove = await this.znp.request(Subsystem.ZDO, 'secDeviceRemove', { extaddr: ieeeAddr });
+                    logger.debug(`Removed device security info for ${ieeeAddr}: ${JSON.stringify(resultSecDeviceRemove)}`, NS);
+                } catch (error) {
+                    logger.debug(`Failed to remove security info for ${ieeeAddr}: ${error}`, NS);
+                }
+                
+                // Remove device from association table
+                try {
+                    const resultAssocRemove = await this.znp.request(Subsystem.UTIL, 'assocRemove', { ieeeadr: ieeeAddr });
+                    logger.debug(`Removed device association for ${ieeeAddr}: ${JSON.stringify(resultAssocRemove)}`, NS);
+                } catch (error) {
+                    logger.debug(`Failed to remove association for ${ieeeAddr}: ${error}`, NS);
+                }
+                
+                logger.debug(`Successfully force removed device ${ieeeAddr} from network`, NS);
+            } catch (error) {
+                logger.error(`Failed to force remove device ${ieeeAddr}: ${error}`, NS);
+                throw error;
+            }
+        });
+    }
+
     public async setChannelInterPAN(channel: number): Promise<void> {
         return await this.queue.execute<void>(async () => {
             this.interpanLock = true;

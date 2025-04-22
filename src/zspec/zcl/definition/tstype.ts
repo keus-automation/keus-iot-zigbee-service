@@ -233,4 +233,5 @@ export type ClusterName =
     | 'manuSpecificAssaDoorLock'
     | 'manuSpecificDoorman'
     | 'manuSpecificProfalux1'
-    | 'manuSpecificAmazonWWAH';
+    | 'manuSpecificAmazonWWAH'
+    | 'keus';

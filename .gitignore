@@ -9,3 +9,6 @@ tsconfig.tsbuildinfo
 
 # MacOS indexing files
 .DS_Store
+
+#zigbee-data
+.zigbee_data/

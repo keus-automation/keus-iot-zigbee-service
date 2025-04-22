@@ -13,7 +13,7 @@ import * as Zdo from '../../zspec/zdo';
 import {ControllerEventMap} from '../controller';
 import {ZclFrameConverter} from '../helpers';
 import ZclTransactionSequenceNumber from '../helpers/zclTransactionSequenceNumber';
-import {DatabaseEntry, DeviceType, KeyValue} from '../tstype';
+import {DatabaseEntry, DeviceType, KeyValue, SendPolicy} from '../tstype';
 import Endpoint from './endpoint';
 import Entity from './entity';
 
@@ -23,6 +23,11 @@ import Entity from './entity';
 const OneJanuary2000 = new Date('January 01, 2000 00:00:00 UTC+00:00').getTime();
 
 const NS = 'zh:controller:device';
+
+/**
+ * Maximum number of attempts to get node descriptor
+ */
+const NODE_DESCRIPTOR_MAX_ATTEMPTS = 3;
 
 interface LQI {
     neighbors: {
@@ -36,6 +41,12 @@ interface LQI {
 
 interface RoutingTable {
     table: {destinationAddress: number; status: string; nextHop: number}[];
+}
+
+const KEUS_ENDPOINTS_MAP: {[key:number]: number} = {
+    0xaaaa: 15,     // keus devices
+    4648: 1,        // door sensor
+    4125: 1         // yale lock
 }
 
 type CustomReadResponse = (frame: Zcl.Frame, endpoint: Endpoint) => boolean;
@@ -67,6 +78,7 @@ export class Device extends Entity<ControllerEventMap> {
     private _pendingRequestTimeout: number;
     private _customClusters: CustomClusters = {};
     private _gpSecurityKey?: number[];
+    private _isKeusDevice?: boolean;
 
     // Getters/setters
     get ieeeAddr(): string {
@@ -205,6 +217,12 @@ export class Device extends Entity<ControllerEventMap> {
     get gpSecurityKey(): number[] | undefined {
         return this._gpSecurityKey;
     }
+    get isKeusDevice(): boolean {
+        return this._isKeusDevice ?? false;
+    }
+    set isKeusDevice(isKeusDevice: boolean) {
+        this._isKeusDevice = isKeusDevice;
+    }
 
     public meta: KeyValue;
 
@@ -308,6 +326,7 @@ export class Device extends Entity<ControllerEventMap> {
         checkinInterval: number | undefined,
         pendingRequestTimeout: number,
         gpSecurityKey: number[] | undefined,
+        isKeusDevice: boolean
     ) {
         super();
         this.ID = ID;
@@ -333,6 +352,7 @@ export class Device extends Entity<ControllerEventMap> {
         this._checkinInterval = checkinInterval;
         this._pendingRequestTimeout = pendingRequestTimeout;
         this._gpSecurityKey = gpSecurityKey;
+        this._isKeusDevice = isKeusDevice;
     }
 
     public createEndpoint(ID: number): Endpoint {
@@ -580,6 +600,7 @@ export class Device extends Entity<ControllerEventMap> {
             entry.checkinInterval,
             pendingRequestTimeout,
             entry.gpSecurityKey,
+            entry.isKeusDevice
         );
     }
 
@@ -613,6 +634,7 @@ export class Device extends Entity<ControllerEventMap> {
             lastSeen: this.lastSeen,
             checkinInterval: this.checkinInterval,
             gpSecurityKey: this.gpSecurityKey,
+            isKeusDevice: this.isKeusDevice
         };
     }
 
@@ -703,6 +725,7 @@ export class Device extends Entity<ControllerEventMap> {
         modelID: string | undefined,
         interviewCompleted: boolean,
         gpSecurityKey: number[] | undefined,
+        isKeusDevice: boolean = false
     ): Device {
         Device.loadFromDatabaseIfNecessary();
 
@@ -733,6 +756,7 @@ export class Device extends Entity<ControllerEventMap> {
             undefined,
             0,
             gpSecurityKey,
+            isKeusDevice
         );
 
         Entity.database!.insert(device.toDatabaseEntry());
@@ -856,11 +880,118 @@ export class Device extends Entity<ControllerEventMap> {
         }
     }
 
+    private async enrollIasDevice(endpoint: Endpoint, sendPolicy?: SendPolicy): Promise<boolean> {
+        const coordinator = Device.byType('Coordinator')[0];
+
+        logger.debug(`Interview - IAS - enrolling '${this.ieeeAddr}' endpoint '${endpoint.ID}'`, NS);
+
+        const stateBefore = await endpoint.read('ssIasZone', ['iasCieAddr', 'zoneState'], 
+            sendPolicy ? {sendPolicy} : {sendPolicy: 'immediate'});
+        logger.debug(`Interview - IAS - before enrolling state: '${JSON.stringify(stateBefore)}'`, NS);
+
+        // Do not enroll when device has already been enrolled
+        if (stateBefore.zoneState !== 1 || stateBefore.iasCieAddr !== coordinator.ieeeAddr) {
+            logger.debug(`Interview - IAS - not enrolled, enrolling`, NS);
+
+            await endpoint.write('ssIasZone', {iasCieAddr: coordinator.ieeeAddr}, 
+                sendPolicy ? {sendPolicy} : {sendPolicy: 'immediate'});
+            logger.debug(`Interview - IAS - wrote iasCieAddr`, NS);
+
+            // There are 2 enrollment procedures:
+            // - Auto enroll: coordinator has to send enrollResponse without receiving an enroll request
+            //                this case is handled below.
+            // - Manual enroll: coordinator replies to enroll request with an enroll response.
+            //                  this case in hanled in onZclData().
+            // https://github.com/Koenkk/zigbee2mqtt/issues/4569#issuecomment-706075676
+            await wait(500);
+            logger.debug(`IAS - '${this.ieeeAddr}' sending enroll response (auto enroll)`, NS);
+            const payload = {enrollrspcode: 0, zoneid: 23};
+            await endpoint.command('ssIasZone', 'enrollRsp', payload, 
+                {disableDefaultResponse: true, ...(sendPolicy ? {sendPolicy} : {sendPolicy: 'immediate'})});
+
+            let enrolled = false;
+            for (let attempt = 0; attempt < 20; attempt++) {
+                await wait(500);
+                const stateAfter = await endpoint.read('ssIasZone', ['iasCieAddr', 'zoneState'], 
+                    sendPolicy ? {sendPolicy} : {sendPolicy: 'immediate'});
+                logger.debug(`Interview - IAS - after enrolling state (${attempt}): '${JSON.stringify(stateAfter)}'`, NS);
+                if (stateAfter.zoneState === 1) {
+                    enrolled = true;
+                    break;
+                }
+            }
+
+            if (enrolled) {
+                logger.debug(`Interview - IAS successfully enrolled '${this.ieeeAddr}' endpoint '${endpoint.ID}'`, NS);
+                return true;
+            } else {
+                throw new Error(`Interview failed because of failed IAS enroll (zoneState didn't change ('${this.ieeeAddr}')`);
+            }
+        } else {
+            logger.debug(`Interview - IAS - already enrolled, skipping enroll`, NS);
+            return true;
+        }
+    }
+
+    private checkIfKeusDevice(): boolean {
+        if (!this._manufacturerID) {
+            return false;
+        }
+        
+        const keusEndPoint = KEUS_ENDPOINTS_MAP[this._manufacturerID];
+        return keusEndPoint !== undefined;
+    }
+
+    private async interviewKeusDevice(ignoreCache: boolean): Promise<void> {
+        const keusEndPoint = KEUS_ENDPOINTS_MAP[this._manufacturerID!];
+        
+        try {
+            const clusterId = Zdo.ClusterId.SIMPLE_DESCRIPTOR_REQUEST;
+            const zdoPayload = Zdo.Buffalo.buildRequest(Entity.adapter!.hasZdoMessageOverhead, clusterId, this.networkAddress, keusEndPoint);
+            const response = await Entity.adapter!.sendZdo(this.ieeeAddr, this.networkAddress, clusterId, zdoPayload, false);
+
+            if (!Zdo.Buffalo.checkStatus(response)) {
+                throw new Zdo.StatusError(response[0]);
+            }
+
+            const simpleDescriptor = response[1];
+            
+            let endpoint = Endpoint.create(
+                keusEndPoint,
+                simpleDescriptor.profileId,
+                simpleDescriptor.deviceId,
+                simpleDescriptor.inClusterList,
+                simpleDescriptor.outClusterList,
+                this.networkAddress,
+                this.ieeeAddr
+            );
+
+            this._endpoints.push(endpoint);
+            this._isKeusDevice = true;
+            logger.debug(`Keus Interview - got simple descriptor for endpoint '${endpoint.ID}' device '${this.ieeeAddr}'`, NS);
+
+            // IAS setup for door sensor
+            if (keusEndPoint === 1 && this._manufacturerID == 4648) {
+                try {
+                    await this.enrollIasDevice(endpoint);
+                } catch (error) {
+                    logger.error(`Interview failed enrolling IAS device: ${error}`, NS);
+                    throw error;
+                }
+            }
+
+            this.save();
+        } catch (error) {
+            logger.error(`Error with Keus device pairing, Simple Descriptor Request Failed: ${error}`, NS);
+            throw new Error('Keus Interview - Simple Descriptor Failed Or IAS Failed');
+        }
+    }
+
     private async interviewInternal(ignoreCache: boolean): Promise<void> {
         const hasNodeDescriptor = (): boolean => this._manufacturerID !== undefined && this._type !== 'Unknown';
 
         if (ignoreCache || !hasNodeDescriptor()) {
-            for (let attempt = 0; attempt < 6; attempt++) {
+            for (let attempt = 0; attempt < NODE_DESCRIPTOR_MAX_ATTEMPTS; attempt++) {
                 try {
                     await this.updateNodeDescriptor();
                     break;
@@ -880,6 +1011,15 @@ export class Device extends Entity<ControllerEventMap> {
 
         if (!hasNodeDescriptor()) {
             throw new Error(`Interview failed because can not get node descriptor ('${this.ieeeAddr}')`);
+        }
+
+        // Check if this is a Keus device
+        if (this.checkIfKeusDevice()) {
+            // Use the dedicated interviewKeusDevice function for Keus devices
+            await this.interviewKeusDevice(ignoreCache);
+            return;
+        } else {
+            this._isKeusDevice = false;
         }
 
         if (this.manufacturerID === 4619 && this._type === 'EndDevice') {
@@ -968,47 +1108,11 @@ export class Device extends Entity<ControllerEventMap> {
 
             // Enroll IAS device
             if (endpoint.supportsInputCluster('ssIasZone')) {
-                logger.debug(`Interview - IAS - enrolling '${this.ieeeAddr}' endpoint '${endpoint.ID}'`, NS);
-
-                const stateBefore = await endpoint.read('ssIasZone', ['iasCieAddr', 'zoneState'], {sendPolicy: 'immediate'});
-                logger.debug(`Interview - IAS - before enrolling state: '${JSON.stringify(stateBefore)}'`, NS);
-
-                // Do not enroll when device has already been enrolled
-                if (stateBefore.zoneState !== 1 || stateBefore.iasCieAddr !== coordinator.ieeeAddr) {
-                    logger.debug(`Interview - IAS - not enrolled, enrolling`, NS);
-
-                    await endpoint.write('ssIasZone', {iasCieAddr: coordinator.ieeeAddr}, {sendPolicy: 'immediate'});
-                    logger.debug(`Interview - IAS - wrote iasCieAddr`, NS);
-
-                    // There are 2 enrollment procedures:
-                    // - Auto enroll: coordinator has to send enrollResponse without receiving an enroll request
-                    //                this case is handled below.
-                    // - Manual enroll: coordinator replies to enroll request with an enroll response.
-                    //                  this case in hanled in onZclData().
-                    // https://github.com/Koenkk/zigbee2mqtt/issues/4569#issuecomment-706075676
-                    await wait(500);
-                    logger.debug(`IAS - '${this.ieeeAddr}' sending enroll response (auto enroll)`, NS);
-                    const payload = {enrollrspcode: 0, zoneid: 23};
-                    await endpoint.command('ssIasZone', 'enrollRsp', payload, {disableDefaultResponse: true, sendPolicy: 'immediate'});
-
-                    let enrolled = false;
-                    for (let attempt = 0; attempt < 20; attempt++) {
-                        await wait(500);
-                        const stateAfter = await endpoint.read('ssIasZone', ['iasCieAddr', 'zoneState'], {sendPolicy: 'immediate'});
-                        logger.debug(`Interview - IAS - after enrolling state (${attempt}): '${JSON.stringify(stateAfter)}'`, NS);
-                        if (stateAfter.zoneState === 1) {
-                            enrolled = true;
-                            break;
-                        }
-                    }
-
-                    if (enrolled) {
-                        logger.debug(`Interview - IAS successfully enrolled '${this.ieeeAddr}' endpoint '${endpoint.ID}'`, NS);
-                    } else {
-                        throw new Error(`Interview failed because of failed IAS enroll (zoneState didn't change ('${this.ieeeAddr}')`);
-                    }
-                } else {
-                    logger.debug(`Interview - IAS - already enrolled, skipping enroll`, NS);
+                try {
+                    await this.enrollIasDevice(endpoint, 'immediate');
+                } catch (error) {
+                    logger.error(`Interview failed enrolling IAS device: ${error}`, NS);
+                    throw error;
                 }
             }
         }
@@ -1142,6 +1246,24 @@ export class Device extends Entity<ControllerEventMap> {
         }
 
         this.removeFromDatabase();
+    }
+
+    public async forceRemoveFromNetwork(ieeeAddr: string): Promise<void> {
+        // Check if an adapter is available
+        const adapter = Entity.adapter;
+        
+        if (!adapter) {
+            logger.error(`No adapter available`, NS);
+            throw new Error(`No adapter available`);
+        }
+        
+        try {
+            // Let the adapter handle the force removal
+            await adapter.forceRemoveDevice(ieeeAddr);
+        } catch (error) {
+            logger.error(`Failed to force remove device ${ieeeAddr}: ${error}`, NS);
+            throw error;
+        }
     }
 
     public removeFromDatabase(): void {
