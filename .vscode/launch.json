@@ -17,6 +17,69 @@
         },
         {
             "type": "node",
+            "request": "launch",
+            "name": "Debug Zigbee Coordinator Moleculer Service",
+            "program": "${workspaceFolder}/examples/molecular-service.js",
+            "preLaunchTask": "build",
+            "skipFiles": [
+                "<node_internals>/**"
+            ],
+            "console": "integratedTerminal",
+            "outFiles": [
+                "${workspaceFolder}/dist/**/*.js"
+            ],
+            "env": {
+                "NODE_ENV": "development",
+                "MOLECULER_LOG_LEVEL": "debug",
+                "USE_LOCAL_MODE": "false",
+                "NODE_ID": "zcs_local_001"
+            },
+            "sourceMaps": true,
+            "restart": true
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "Debug Test Zigbee Coordinator Moleculer Service",
+            "program": "${workspaceFolder}/examples/test-moleculer-service.js",
+            "skipFiles": [
+                "<node_internals>/**"
+            ],
+            "console": "integratedTerminal",
+            "env": {
+                "NODE_ENV": "development",
+                "MOLECULER_LOG_LEVEL": "debug",
+                "USE_LOCAL_MODE": "true",
+                "NODE_ID": "test_client_local_001"
+            },
+            "sourceMaps": true,
+            "restart": false
+        },
+        {
+            "type": "node",
+            "request": "launch",
+            "name": "Debug With NATS (Distributed Mode)",
+            "program": "${workspaceFolder}/examples/molecular-service.js",
+            "preLaunchTask": "build",
+            "skipFiles": [
+                "<node_internals>/**"
+            ],
+            "console": "integratedTerminal",
+            "outFiles": [
+                "${workspaceFolder}/dist/**/*.js"
+            ],
+            "env": {
+                "NODE_ENV": "development",
+                "MOLECULER_LOG_LEVEL": "debug",
+                "USE_LOCAL_MODE": "false",
+                "NATS_URL": "nats://10.1.5.244:9769",
+                "NODE_ID": "zcs_distributed_001"
+            },
+            "sourceMaps": true,
+            "restart": true
+        },
+        {
+            "type": "node",
             "request": "attach",
             "name": "Attach to Running Process",
             "port": 9229,
