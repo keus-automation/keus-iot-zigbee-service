@@ -5363,7 +5363,7 @@ export const Clusters: Readonly<Record<ClusterName, Readonly<ClusterDefinition>>
     //Keus
     keus: {
         ID: 0x0B21,
-        manufacturerCode: ManufacturerCode.KEUS,
+        // manufacturerCode: ManufacturerCode.KEUS,  //this cluster is not manufacturer specific
         attributes: {},
         commands: {
             appMsg: {

@@ -6,7 +6,14 @@ const SERIAL = 'COM20';
 const DB = './.zigbee_data/devices.db';
 const DB_BACKUP = './.zigbee_data/devices.db.backup';
 const ADAPTER_BACKUP = './.zigbee_data/adapter.backup';
-const KEUS_DEVICE_ENDPOINT = 15;
+const KEUS_DEVICE_ENDPOINT = KEUS_MASTER_ENDPOINT = 15;
+
+const GENERAL_UNICAST_REQ_OPTIONS = {
+    disableDefaultResponse: true,
+    response: true,
+    timeout: 10000,
+    srcEndpoint: KEUS_MASTER_ENDPOINT
+};
 
 // Load device metadata from JSON file
 const deviceMetaInfoPath = path.resolve(__dirname, 'device_meta_info.json');
@@ -43,6 +50,52 @@ const coordinator = new Controller({
     backupPath: ADAPTER_BACKUP,
 });
 
+const sendKeusAppUnicast = async (deviceId, clusterId, commandId, data) => {
+    try {
+        let device = coordinator.getDeviceByIeeeAddr(deviceId);
+
+        if (!device) {
+            return {
+                success: false,
+                error: 'Invalid Device'
+            };
+        }
+
+        let endpoint = device.getEndpoint(KEUS_DEVICE_ENDPOINT);
+
+        if (!endpoint) {
+            return {
+                success: false,
+                error: 'Invalid Endpoint'
+            };
+        }
+
+        let keusAppMsgRsp = await endpoint.command(
+            'keus',
+            'appMsg',
+            {
+                clusterId: clusterId,
+                commandId: commandId,
+                dataLen: data.length,
+                data: data
+            },
+            GENERAL_UNICAST_REQ_OPTIONS
+        );
+
+        return {
+            success: true,
+            rsp: keusAppMsgRsp
+        };
+    } 
+    catch (err) 
+    {
+        console.error(err);
+        return {success: false, error: err};
+    }
+};
+
+
+
 coordinator.on('message', async (msg) => {
     console.log(msg);
 });
@@ -61,7 +114,7 @@ coordinator.on('deviceJoined', (device) => {
     console.log('New device joined', device);
 });
 
-coordinator.on('deviceInterview', (interview) => {
+coordinator.on('deviceInterview', async (interview) => {
     if(interview.status === 'successful') 
     {
         console.log('Device interview successful');
@@ -90,6 +143,18 @@ coordinator.on('deviceInterview', (interview) => {
             } else {
                 console.log("Unknown device category:", deviceCategory, "type:", deviceType);
             }
+
+            //query device info
+            let requestData = Buffer.alloc(5);    // Create a 5-byte buffer
+            requestData.writeUInt8(150, 0);         //read 150 bytes
+            requestData.writeUInt32LE(0x57edc, 1);  //at location 0x57edc 
+
+            let response = await sendKeusAppUnicast(deviceId, 21, 31, requestData);
+            console.log(response);
+            if(response.success) 
+            {
+                let responseData = response.rsp.data;
+            }
         }
         else {
             console.log(device.isKeusDevice)
@@ -105,10 +170,32 @@ coordinator.on('deviceInterview', (interview) => {
     }
 });
 
+async function pingCheckDevices() {
+    let devices = [...coordinator.getDevicesIterator(device => device.type === 'Router')];
+    console.log(`pinging ${devices.length} devices`);
+
+    for(let device of devices) {
+
+        let response = await sendKeusAppUnicast(device.ieeeAddr, 1, 7, []);
+        if(response.success) {
+            console.log(`${device.ieeeAddr} is online`);
+        }
+        else {
+            console.log(`pinging ${device.ieeeAddr} failed`);
+        }
+        
+    }
+
+    setTimeout(pingCheckDevices, 10000);
+}
+
 coordinator
     .start()
     .then(() => {
         console.log('started with device', SERIAL);
+
+        setTimeout(pingCheckDevices, 5000);
+        
         return coordinator.permitJoin(180);
     })
     .catch((err) => {
