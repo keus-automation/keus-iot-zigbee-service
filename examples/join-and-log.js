@@ -44,6 +44,11 @@ deviceMetaInfoData.forEach(device => {
 });
 
 const coordinator = new Controller({
+    options: {
+        network: {
+           channelList: [26],
+        }
+    },
     serialPort: {path: SERIAL},
     databasePath: DB,
     databaseBackupPath: DB_BACKUP,
