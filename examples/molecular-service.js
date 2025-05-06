@@ -4,25 +4,51 @@
  */
 
 // Moleculer-related imports
-const { ServiceBroker } = require('moleculer');
-const { Controller } = require('../dist');
-const fs = require('fs');
-const path = require('path');
+import { ServiceBroker } from 'moleculer';
+import { Controller } from '../dist/index.js';
+import fs from 'fs';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import { Middleware as ChannelsMiddleware } from "@moleculer/channels";
+import { createRequire } from 'module';
+
+// Helper to get __dirname in ES modules
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const require = createRequire(import.meta.url);
 
 // Load Moleculer configuration if it exists
 let brokerConfig = {};
 const configPath = path.resolve(__dirname, 'moleculer.config.js');
-if (fs.existsSync(configPath)) {
-    brokerConfig = require(configPath);
-}
+
+// Use an IIFE to load the config potentially asynchronously (though require is sync)
+(async () => {
+    if (fs.existsSync(configPath)) {
+        console.log(`Loading configuration from ${configPath}`);
+        try {
+            brokerConfig = require(configPath);
+            console.log("Successfully loaded moleculer.config.js");
+        } catch (e) {
+            console.error("Error loading moleculer.config.js with createRequire:", e);
+            brokerConfig = {};
+        }
+    } else {
+        console.log("moleculer.config.js not found, using default configuration.");
+    }
+})(); // Immediately invoke the async function
 
 // Environment configuration
-const useLocalMode = process.env.USE_LOCAL_MODE === "true" || false;
-const natsUrl = process.env.NATS_URL || "nats://10.1.5.244:9769";
-const natsToken = process.env.NATS_TOKEN || 'keus-iot-platform';
+const USE_LOCAL_MODE = process.env.USE_LOCAL_MODE === "true" || false;
+const NATS_URL = process.env.NATS_URL || "nats://100.82.115.91:9769"; // Ensure this is defined before getChannelsMiddleware
+const NATS_TOKEN = process.env.NATS_TOKEN || 'keus-iot-platform';
 
-// Load Moleculer Channels middleware
-const ChannelsMiddleware = require("@moleculer/channels").Middleware;
+const NATS_OPTIONS = {
+    url: NATS_URL,
+    token: NATS_TOKEN,
+    reconnect: true,
+    maxReconnectAttempts: -1,
+    waitOnFirstConnect: true           
+}
 
 // Configuration
 const CONFIG = {
@@ -33,8 +59,9 @@ const CONFIG = {
     KEUS_DEVICE_ENDPOINT: 15,
     KEUS_MASTER_ENDPOINT: 15,
     DEVICE_META_INFO_PATH: path.resolve(__dirname, 'device_meta_info.json'),
-    PING_INTERVAL_MS: 10000,
-    PERMIT_JOIN_DURATION: 180
+    PING_INTERVAL_MS: 20000,
+    PERMIT_JOIN_DURATION: 180,
+    CHANNEL_LIST: [15]
 };
 
 // Standard request options for Keus unicast messages
@@ -45,14 +72,66 @@ const GENERAL_UNICAST_REQ_OPTIONS = {
     srcEndpoint: CONFIG.KEUS_MASTER_ENDPOINT
 };
 
+// Define getChannelsMiddleware *after* natsUrl is defined
+export const getChannelsMiddleware = ({
+    streamName = "kiotp-default",
+    namespace, // No default value
+    subjects = [`p1.>`, `p2.>`, `default.>`],
+    sendMethodName = "sendToStream",
+    debug = false,
+}) => {
+    subjects = subjects.map(subject => `${namespace}.${subject}`);
+    //@ts-ignore
+    return ChannelsMiddleware({
+        sendMethodName: sendMethodName,
+        adapter: {
+            type: "NATS",
+            //@ts-ignore
+            options: {
+                nats: {
+                    url: NATS_URL,
+                    connectionOptions: {
+                        token: NATS_TOKEN,
+                        debug: debug,
+                        reconnect: true,
+                        maxReconnectAttempts: -1,
+                        waitOnFirstConnect: true     
+                    },
+                    streamConfig: {
+                        name: streamName,
+                        subjects: subjects,
+                        max_age: 12 * 60 * 60 * 1000 * 1000 * 1000 // 12 hours
+                    },
+                    consumerOptions: {
+                        config: {
+                            deliver_policy: "new",
+                            ack_policy: "explicit",
+                            ack_wait: 1 * 60 * 60 * 1000 * 1000 * 1000 // 1 hour
+                        }
+                    },
+                },
+                maxInFlight: 100000,
+                maxRetries: 5
+            }
+        },
+
+        context: true,
+    })
+
+}
+
 /**
  * Device Manager class
  * Handles loading device metadata and organizing it for lookup
  */
 class DeviceManager {
-    constructor(deviceMetaInfoPath) {
+
+    platformNodeID;
+
+    constructor(deviceMetaInfoPath, platformNodeID) {
         this.deviceInfoByCategoryAndType = {};
         this.loadDeviceMetaInfo(deviceMetaInfoPath);
+        this.platformNodeID = platformNodeID;
     }
 
     loadDeviceMetaInfo(metaInfoPath) {
@@ -98,29 +177,14 @@ const broker = new ServiceBroker({
     ...brokerConfig,
     nodeID: process.env.NODE_ID || "zcs_001",
     // Use transporter only in distributed mode
-    transporter: useLocalMode ? null : {
+    transporter: USE_LOCAL_MODE ? null : {
         type: "NATS",
-        options: {
-            url: natsUrl,
-            token: natsToken,
-        }
+        options: NATS_OPTIONS
     },
     middlewares: [
         // Add Channels middleware for persistent messaging
-        ChannelsMiddleware({
-            adapter: {
-                type: "NATS",
-                options: {
-                    nats: {
-                        url: natsUrl,
-                        connectionOptions: {
-                            token: 'keus-iot-platform'
-                        }
-                    }
-                }
-            },
-            sendMethodName: "sendToChannel"
-        })
+        
+        getChannelsMiddleware({})
     ]
 });
 
@@ -138,9 +202,12 @@ broker.createService({
     
     // Service created lifecycle event handler
     created() {
-        this.deviceManager = new DeviceManager(this.settings.config.DEVICE_META_INFO_PATH);
+        this.deviceManager = new DeviceManager(this.settings.config.DEVICE_META_INFO_PATH, this.broker.nodeID);
         
         this.coordinator = new Controller({
+            network: {
+                channelList: this.settings.config.CHANNEL_LIST,
+            },
             serialPort: {path: this.settings.config.SERIAL_PORT},
             databasePath: this.settings.config.DB_PATH,
             databaseBackupPath: this.settings.config.DB_BACKUP_PATH,
@@ -166,6 +233,7 @@ broker.createService({
             
             // Start ping monitoring after a short delay
             this.pingTimer = setTimeout(this.pingMonitorDevices.bind(this), 5000);
+
         } catch (error) {
             this.logger.error("Failed to start Zigbee service:", error);
             throw error;
@@ -277,8 +345,8 @@ broker.createService({
         async queryDeviceInfo(deviceId) {
             // Query device info by reading data from specific memory location
             let requestData = Buffer.alloc(5);
-            requestData.writeUInt8(150, 0);         // Read 150 bytes
-            requestData.writeUInt32LE(0x57edc, 1);  // At location 0x57edc
+            requestData.writeUInt32LE(0x57edc, 0);  // At location 0x57edc
+            requestData.writeUInt8(150, 4);         // Read 150 bytes
 
             let response = await this.sendKeusAppUnicast(deviceId, 21, 31, requestData);
             
@@ -355,11 +423,19 @@ broker.createService({
                     
                     // Send heartbeat message for online device using channels
                     try {
-                        await this.broker.sendToChannel("p1.zigbee.device.heartBeat", { 
-                            deviceId: device.ieeeAddr,
+
+                        await this.broker.sendToStream("p1.zigbee.parallel.events.heartBeat", { 
+                                data: {
+                                deviceId: device.ieeeAddr,
+                            },
+                            deviceCategory: 7,
+                            deviceType: 1,
+                            eventType: "DEVICE_HEARTBEAT",
                             timestamp: Date.now()
                         });
+                        
                         this.logger.debug(`Heartbeat sent for device ${device.ieeeAddr}`);
+                        
                     } catch (err) {
                         this.logger.warn(`Failed to send heartbeat for device ${device.ieeeAddr}:`, err.message);
                     }
@@ -371,8 +447,32 @@ broker.createService({
             // Broadcast device statuses
             this.broker.broadcast("zigbee.deviceStatuses", { devices: deviceStatuses });
 
+            this.getRoutingTable();
+
             // Schedule next ping
             this.pingTimer = setTimeout(this.pingMonitorDevices.bind(this), this.settings.config.PING_INTERVAL_MS);
+
+        
+        },
+
+        async getRoutingTable() {
+
+            try {
+                this.logger.info("Getting routing table");
+                let device = this.coordinator.getDeviceByIeeeAddr("0x00124b0027635b1d");
+
+                if (!device) {
+                    this.logger.error("Invalid Device");
+                    return;
+                }
+
+                let routingTable = await device.routingTable();
+                this.logger.info(`Routing table: ${JSON.stringify(routingTable)}`);
+            } 
+            catch (err) {
+                this.logger.error('Failed to get routing table:', err);
+                return {success: false, error: err};
+            }
         }
     },
     
@@ -418,6 +518,32 @@ broker.createService({
                 const { deviceId, clusterId, commandId, data } = ctx.params;
                 const response = await this.sendKeusAppUnicast(deviceId, clusterId, commandId, data);
                 return response;
+            }
+        },
+
+        getFactoryInfo: {
+            async handler(ctx) {
+                const { deviceId } = ctx.params;
+
+                this.logger.info(`Getting factory info for device ${deviceId}`);
+
+                //query device info
+                let requestData = Buffer.alloc(5);    // Create a 5-byte buffer
+                requestData.writeUInt32LE(0x57edc, 0);  //at location 0x57edc 
+                requestData.writeUInt8(150, 4);         //read 150 bytes
+
+                // let response = await this.sendKeusAppUnicast(deviceId, 21, 31, requestData);
+                // console.log(response);
+                
+                // let factoryInfoRsp = {
+                //     success: response.success,
+                //     info: response.rsp.data
+                // };
+
+                //this.logger.info(`Factory info for device ${deviceId}: ${JSON.stringify(factoryInfoRsp)}`);
+
+                return {success: false, info: null};
+                // return factoryInfoRsp;
             }
         },
         

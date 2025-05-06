@@ -44,10 +44,8 @@ deviceMetaInfoData.forEach(device => {
 });
 
 const coordinator = new Controller({
-    options: {
-        network: {
-           channelList: [26],
-        }
+    network: {
+       channelList: [26],
     },
     serialPort: {path: SERIAL},
     databasePath: DB,
@@ -151,8 +149,8 @@ coordinator.on('deviceInterview', async (interview) => {
 
             //query device info
             let requestData = Buffer.alloc(5);    // Create a 5-byte buffer
-            requestData.writeUInt8(150, 0);         //read 150 bytes
-            requestData.writeUInt32LE(0x57edc, 1);  //at location 0x57edc 
+            requestData.writeUInt32LE(0x57edc, 0);  //at location 0x57edc 
+            requestData.writeUInt8(150, 4);         //read 150 bytes
 
             let response = await sendKeusAppUnicast(deviceId, 21, 31, requestData);
             console.log(response);

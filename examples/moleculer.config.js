@@ -5,7 +5,7 @@
 
 module.exports = {
     // Namespace for the services
-    namespace: "akhil_local_zigbee",
+    namespace: "Keus-199786d6-saiteja-RandomId-af7f2a3ab9b0",
     
     // Default log level for built-in console logger
     // Available values: trace, debug, info, warn, error, fatal
@@ -43,7 +43,7 @@ module.exports = {
     },
 
     // Enable/disable graceful shutdowns
-    shutdownTimeout: 5000,
+    shutdownTimeout: 10000,
 
     // Enable local REPL in development mode
     replCommands: null,
