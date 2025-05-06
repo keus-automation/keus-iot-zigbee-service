@@ -10,37 +10,16 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { Middleware as ChannelsMiddleware } from "@moleculer/channels";
-import { createRequire } from 'module';
 
 // Helper to get __dirname in ES modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-const require = createRequire(import.meta.url);
-
-// Load Moleculer configuration if it exists
-let brokerConfig = {};
-const configPath = path.resolve(__dirname, 'moleculer.config.js');
-
-// Use an IIFE to load the config potentially asynchronously (though require is sync)
-(async () => {
-    if (fs.existsSync(configPath)) {
-        console.log(`Loading configuration from ${configPath}`);
-        try {
-            brokerConfig = require(configPath);
-            console.log("Successfully loaded moleculer.config.js");
-        } catch (e) {
-            console.error("Error loading moleculer.config.js with createRequire:", e);
-            brokerConfig = {};
-        }
-    } else {
-        console.log("moleculer.config.js not found, using default configuration.");
-    }
-})(); // Immediately invoke the async function
 
 // Environment configuration
-const USE_LOCAL_MODE = process.env.USE_LOCAL_MODE === "true" || false;
 const NATS_URL = process.env.NATS_URL || "nats://100.82.115.91:9769"; // Ensure this is defined before getChannelsMiddleware
 const NATS_TOKEN = process.env.NATS_TOKEN || 'keus-iot-platform';
+const KEUS_ZIGBEE_ENDPOINT = 15;
+const USE_LOCAL_MODE = true;
 
 const NATS_OPTIONS = {
     url: NATS_URL,
@@ -52,16 +31,17 @@ const NATS_OPTIONS = {
 
 // Configuration
 const CONFIG = {
-    SERIAL_PORT: 'COM20',
-    DB_PATH: './.zigbee_data/devices.db',
-    DB_BACKUP_PATH: './.zigbee_data/devices.db.backup',
-    ADAPTER_BACKUP_PATH: './.zigbee_data/adapter.backup',
-    KEUS_DEVICE_ENDPOINT: 15,
-    KEUS_MASTER_ENDPOINT: 15,
-    DEVICE_META_INFO_PATH: path.resolve(__dirname, 'device_meta_info.json'),
-    PING_INTERVAL_MS: 20000,
-    PERMIT_JOIN_DURATION: 180,
-    CHANNEL_LIST: [15]
+    SERIAL_PORT: process.env.ZIGBEE_SERIAL_PORT?? 'COM20',
+    DB_PATH: process.env.ZIGBEE_DB_PATH?? './.zigbee_data/devices.db',
+    DB_BACKUP_PATH: process.env.ZIGBEE_DB_BACKUP_PATH?? './.zigbee_data/devices.db.backup',
+    ADAPTER_BACKUP_PATH: process.env.ZIGBEE_ADAPTER_BACKUP_PATH?? './.zigbee_data/adapter.backup',
+    ZIBGEE_NWK_INFO_PATH: process.env.ZIGBEE_NWK_INFO_PATH?? './.zigbee_data/zigbee_nwk_info.json',
+    KEUS_DEVICE_ENDPOINT: KEUS_ZIGBEE_ENDPOINT,
+    KEUS_MASTER_ENDPOINT: KEUS_ZIGBEE_ENDPOINT,
+    DEVICE_META_INFO_PATH: process.env.ZIGBEE_DEVICE_META_INFO_PATH?? path.resolve(__dirname, 'device_meta_info.json'),
+    PING_INTERVAL_MS: process.env.ZIGBEE_PING_INTERVAL_MS?? 20000,
+    PERMIT_JOIN_DURATION: process.env.ZIGBEE_PERMIT_JOIN_DURATION?? 180,
+    CHANNEL_LIST: process.env.ZIGBEE_CHANNEL_LIST?? [15]
 };
 
 // Standard request options for Keus unicast messages
@@ -166,15 +146,62 @@ class DeviceManager {
         }
     }
 
+    interpretDeviceIdentifier(deviceIdentifier) {
+        let deviceType = deviceIdentifier & 0x00FF;
+        let deviceCategory = (deviceIdentifier >> 8) & 0x00FF;
+
+        return {deviceType, deviceCategory};
+    }
+        
     getDeviceInfo(categoryId, typeId) {
         const categoryInfo = this.deviceInfoByCategoryAndType[categoryId];
         return categoryInfo && categoryInfo[typeId];
+    }
+
+    /**
+     * Load network information from config file or create default
+     * @returns Network information object
+     */
+    getNetworkInfo() {
+        let nwkInfo;
+        try {
+            if (fs.existsSync(CONFIG.ZIBGEE_NWK_INFO_PATH)) {
+                nwkInfo = JSON.parse(fs.readFileSync(CONFIG.ZIBGEE_NWK_INFO_PATH, 'utf8'));
+            }
+
+            console.log("Read existing network info", nwkInfo);
+        } catch (error) {
+            console.log(`Error reading network info file: ${error.message}`);
+        }
+        
+        if (!nwkInfo) {
+            nwkInfo = {
+                panID: Math.floor(Math.random() * 0xFFF0) + 1,
+                channelList: CONFIG.CHANNEL_LIST
+            };
+
+            try {
+                // Ensure directory exists
+                const dirPath = CONFIG.ZIBGEE_NWK_INFO_PATH.substring(0, CONFIG.ZIBGEE_NWK_INFO_PATH.lastIndexOf('/'));
+                if (dirPath && !fs.existsSync(dirPath)) {
+                    fs.mkdirSync(dirPath, { recursive: true });
+                }
+                
+                fs.writeFileSync(CONFIG.ZIBGEE_NWK_INFO_PATH, JSON.stringify(nwkInfo, null, 2));
+
+                console.log("Created new network info", nwkInfo);
+            } catch (error) {
+                console.error(`Failed to create network info file: ${error.message}`);
+            }
+        }
+        
+        return nwkInfo;
     }
 }
 
 // Create a Moleculer broker with the loaded configuration
 const broker = new ServiceBroker({
-    ...brokerConfig,
+    namespace: "Keus-199786d6-saiteja-RandomId-af7f2a3ab9b0",
     nodeID: process.env.NODE_ID || "zcs_001",
     // Use transporter only in distributed mode
     transporter: USE_LOCAL_MODE ? null : {
@@ -204,10 +231,11 @@ broker.createService({
     created() {
         this.deviceManager = new DeviceManager(this.settings.config.DEVICE_META_INFO_PATH, this.broker.nodeID);
         
+        // Get existing network info
+        const nwkInfo = this.deviceManager.getNetworkInfo();
+
         this.coordinator = new Controller({
-            network: {
-                channelList: this.settings.config.CHANNEL_LIST,
-            },
+            network: nwkInfo,
             serialPort: {path: this.settings.config.SERIAL_PORT},
             databasePath: this.settings.config.DB_PATH,
             databaseBackupPath: this.settings.config.DB_BACKUP_PATH,
@@ -230,9 +258,6 @@ broker.createService({
             
             // Enable permit join for devices
             await this.coordinator.permitJoin(this.settings.config.PERMIT_JOIN_DURATION);
-            
-            // Start ping monitoring after a short delay
-            this.pingTimer = setTimeout(this.pingMonitorDevices.bind(this), 5000);
 
         } catch (error) {
             this.logger.error("Failed to start Zigbee service:", error);
@@ -260,7 +285,7 @@ broker.createService({
     methods: {
         handleMessage(msg) {
             this.logger.debug('Message received:', msg);
-            this.broker.broadcast("zigbee.message", { message: msg });
+            //TODO: Handle non-keus messages
         },
         
         handlePermitJoinChanged(msg) {
@@ -274,91 +299,61 @@ broker.createService({
         },
         
         handleDeviceJoined(device) {
-            this.logger.info('New device joined:', device.ieeeAddr);
-            this.broker.broadcast("zigbee.deviceJoined", { device: { ieeeAddr: device.ieeeAddr, type: device.type } });
+            this.logger.info('New device joined: ', device.ieeeAddr);
         },
         
         async handleDeviceInterview(interview) {
+
+            const device = interview.device;
+
             if(interview.status === 'successful') {
                 this.logger.info('Device interview successful');
 
-                const device = interview.device;
-                
                 if (device.isKeusDevice && device.manufacturerID === 0xAAAA) {
-                    this.logger.info('Identified as Keus Device');
+                    this.logger.info('Identified as Keus custom device');
                     
                     // Get device details
                     let endpoint = device.getEndpoint(this.settings.config.KEUS_DEVICE_ENDPOINT);
-                    let deviceId = endpoint.deviceID;
-                    let deviceType = deviceId & 0x00FF;
-                    let deviceCategory = (deviceId >> 8) & 0x00FF;
+                    let deviceIdentifier = endpoint.deviceID;
+                    let {deviceType, deviceCategory} = this.deviceManager.interpretDeviceIdentifier(deviceIdentifier);
                     let currentTimestamp = new Date().valueOf();
                     
                     // Look up device info from indexed metadata
-                    const deviceInfo = this.deviceManager.getDeviceInfo(deviceCategory, deviceType);
+                    const deviceInfo = this.deviceManager.getDeviceInfo(deviceType, deviceCategory);
                     
-                    if (deviceInfo) {
-                        this.logger.info({
+                    if (deviceInfo) 
+                    {
+                        this.logger.info("Device info:",{
                             timestamp: currentTimestamp,
                             category: deviceInfo.categoryDisplayName,
                             type: deviceInfo.typeDisplayName,
                             deviceType: deviceInfo.deviceType,
                             chipType: deviceInfo.chipType,
                             otaUpgradeable: deviceInfo.isOtaUpgradeable
-                        }, "Device info");
-                        
-                        // Query additional device info
-                        const extraInfo = await this.queryDeviceInfo(device.ieeeAddr);
+                        });
                         
                         // Emit event with device details
-                        this.broker.broadcast("zigbee.deviceIdentified", {
+                        this.broker.sendToStream("p1.zigbee.device.join", {
                             ieeeAddr: device.ieeeAddr,
                             timestamp: currentTimestamp,
-                            deviceInfo: deviceInfo,
-                            extraInfo: extraInfo
+                            deviceInfo: deviceInfo
                         });
                     } else {
                         this.logger.warn(`Unknown device category: ${deviceCategory}, type: ${deviceType}`);
-                        this.broker.broadcast("zigbee.unknownDeviceType", {
-                            ieeeAddr: device.ieeeAddr,
-                            category: deviceCategory,
-                            type: deviceType
-                        });
                     }
                 } else {
-                    this.logger.info('Unknown device:', device.ieeeAddr);
-                    this.broker.broadcast("zigbee.unknownDevice", {
-                        ieeeAddr: device.ieeeAddr,
-                        manufacturerID: device.manufacturerID
-                    });
+                    this.logger.info('Unknown zigbee device:', device.ieeeAddr);
                 }
-            } else if(interview.status === 'failed') {
+            } 
+            else if(interview.status === 'failed') 
+            {
                 this.logger.warn('Device interview failed:', interview.device.ieeeAddr);
-                this.broker.broadcast("zigbee.deviceInterviewFailed", {
-                    ieeeAddr: interview.device.ieeeAddr
-                });
+                this.logger.info('Removing device from network');
+                device.removeFromNetwork();
+
             } else {
                 this.logger.debug('Device interview status:', interview.status);
             }
-        },
-        
-        async queryDeviceInfo(deviceId) {
-            // Query device info by reading data from specific memory location
-            let requestData = Buffer.alloc(5);
-            requestData.writeUInt32LE(0x57edc, 0);  // At location 0x57edc
-            requestData.writeUInt8(150, 4);         // Read 150 bytes
-
-            let response = await this.sendKeusAppUnicast(deviceId, 21, 31, requestData);
-            
-            if(response.success) {
-                this.logger.debug('Device info query successful');
-                let responseData = response.rsp.data;
-                // Process response data here if needed
-                return responseData;
-            }
-            
-            this.logger.warn('Device info query failed');
-            return null;
         },
         
         async sendKeusAppUnicast(deviceId, clusterId, commandId, data) {
@@ -403,92 +398,16 @@ broker.createService({
                 return {success: false, error: err};
             }
         },
-        
-        async pingMonitorDevices() {
-            let devices = [...this.coordinator.getDevicesIterator(device => device.type === 'Router')];
-            this.logger.info(`Pinging ${devices.length} devices`);
-
-            const deviceStatuses = [];
-            for(let device of devices) {
-                let response = await this.sendKeusAppUnicast(device.ieeeAddr, 1, 7, []);
-                const isOnline = response.success;
-                
-                deviceStatuses.push({
-                    ieeeAddr: device.ieeeAddr,
-                    online: isOnline
-                });
-                
-                if(isOnline) {
-                    this.logger.debug(`${device.ieeeAddr} is online`);
-                    
-                    // Send heartbeat message for online device using channels
-                    try {
-
-                        await this.broker.sendToStream("p1.zigbee.parallel.events.heartBeat", { 
-                                data: {
-                                deviceId: device.ieeeAddr,
-                            },
-                            deviceCategory: 7,
-                            deviceType: 1,
-                            eventType: "DEVICE_HEARTBEAT",
-                            timestamp: Date.now()
-                        });
-                        
-                        this.logger.debug(`Heartbeat sent for device ${device.ieeeAddr}`);
-                        
-                    } catch (err) {
-                        this.logger.warn(`Failed to send heartbeat for device ${device.ieeeAddr}:`, err.message);
-                    }
-                } else {
-                    this.logger.warn(`Pinging ${device.ieeeAddr} failed`);
-                }
-            }
-            
-            // Broadcast device statuses
-            this.broker.broadcast("zigbee.deviceStatuses", { devices: deviceStatuses });
-
-            this.getRoutingTable();
-
-            // Schedule next ping
-            this.pingTimer = setTimeout(this.pingMonitorDevices.bind(this), this.settings.config.PING_INTERVAL_MS);
-
-        
-        },
-
-        async getRoutingTable() {
-
-            try {
-                this.logger.info("Getting routing table");
-                let device = this.coordinator.getDeviceByIeeeAddr("0x00124b0027635b1d");
-
-                if (!device) {
-                    this.logger.error("Invalid Device");
-                    return;
-                }
-
-                let routingTable = await device.routingTable();
-                this.logger.info(`Routing table: ${JSON.stringify(routingTable)}`);
-            } 
-            catch (err) {
-                this.logger.error('Failed to get routing table:', err);
-                return {success: false, error: err};
-            }
-        }
     },
     
     // Service actions that can be called by other services or externally
     actions: {
-        // Get all currently connected devices
+
+        // Get all currently connected active devices
         getDevices: {
             handler() {
-                const devices = [...this.coordinator.getDevicesIterator()].map(device => ({
-                    ieeeAddr: device.ieeeAddr,
-                    networkAddress: device.networkAddress,
-                    type: device.type,
-                    manufacturerID: device.manufacturerID,
-                    manufacturerName: device.manufacturerName,
-                    isKeusDevice: device.isKeusDevice || false
-                }));
+                const devices = [...this.coordinator.getDevicesIterator()].map(device => (
+                    device.type === 'Router' || device.type === 'EndDevice'));
                 
                 return devices;
             }
@@ -509,133 +428,33 @@ broker.createService({
         // Manually send a command to a device
         sendCommand: {
             params: {
-                deviceId: { type: "string" },
+                ieeeAddr: { type: "string", optional: true},
+                groupId: { type: "number", optional: true },
+                sceneId: { type: "number", optional: true },
                 clusterId: { type: "number" },
                 commandId: { type: "number" },
                 data: { type: "array", items: "number" }
             },
-            async handler(ctx) {
-                const { deviceId, clusterId, commandId, data } = ctx.params;
-                const response = await this.sendKeusAppUnicast(deviceId, clusterId, commandId, data);
-                return response;
-            }
-        },
-
-        getFactoryInfo: {
-            async handler(ctx) {
-                const { deviceId } = ctx.params;
-
-                this.logger.info(`Getting factory info for device ${deviceId}`);
-
-                //query device info
-                let requestData = Buffer.alloc(5);    // Create a 5-byte buffer
-                requestData.writeUInt32LE(0x57edc, 0);  //at location 0x57edc 
-                requestData.writeUInt8(150, 4);         //read 150 bytes
-
-                // let response = await this.sendKeusAppUnicast(deviceId, 21, 31, requestData);
-                // console.log(response);
-                
-                // let factoryInfoRsp = {
-                //     success: response.success,
-                //     info: response.rsp.data
-                // };
-
-                //this.logger.info(`Factory info for device ${deviceId}: ${JSON.stringify(factoryInfoRsp)}`);
-
-                return {success: false, info: null};
-                // return factoryInfoRsp;
-            }
-        },
-        
-        // Ping a specific device
-        pingDevice: {
-            params: {
-                deviceId: { type: "string" }
-            },
-            async handler(ctx) {
-                const { deviceId } = ctx.params;
-                const response = await this.sendKeusAppUnicast(deviceId, 1, 7, []);
-                
-                // Send heartbeat on successful ping
-                if (response.success) {
-                    try {
-                        await this.broker.sendToStream("p1.zigbee.device.heartBeat", { 
-                            deviceId: deviceId,
-                            timestamp: Date.now()
-                        });
-                    } catch (err) {
-                        this.logger.warn(`Failed to send heartbeat for device ${deviceId}:`, err.message);
-                    }
+            async handler(ctx) 
+            {
+                const { ieeeAddr, groupId, sceneId, clusterId, commandId, data } = ctx.params;
+                if(ieeeAddr)
+                {
+                    const response = await this.sendKeusAppUnicast(ieeeAddr, clusterId, commandId, data);
+                    return response;
                 }
-                
-                return {
-                    ieeeAddr: deviceId,
-                    online: response.success
-                };
+                else 
+                {
+                    return {success: false, error: 'Currently not supported'};
+                }
             }
-        }
+        },
     },
     
     // Service events
-    events: {
-        // Example of handling an event from another service
-        "otherService.event": {
-            handler(ctx) {
-                this.logger.info("Received event from another service:", ctx.params);
-            }
-        }
-    }
+    events: {}
 });
 
-// Create a second service to demonstrate Moleculer's inter-service communication
-broker.createService({
-    name: "zigbeeMonitor",
-    
-    created() {
-        this.deviceStatuses = new Map();
-    },
-    
-    events: {
-        // Subscribe to device status updates
-        "zigbee.deviceStatuses": {
-            handler(ctx) {
-                const devices = ctx.params.devices;
-                
-                devices.forEach(device => {
-                    this.deviceStatuses.set(device.ieeeAddr, {
-                        online: device.online,
-                        lastSeen: new Date()
-                    });
-                });
-                
-                this.logger.info(`Updated status for ${devices.length} devices`);
-            }
-        },
-        
-        // Subscribe to device identified events
-        "zigbee.deviceIdentified": {
-            handler(ctx) {
-                const { ieeeAddr, deviceInfo } = ctx.params;
-                this.logger.info(`Device identified: ${deviceInfo.deviceType} (${ieeeAddr})`);
-            }
-        }
-    },
-    
-    actions: {
-        // Get all device statuses
-        getDeviceStatuses: {
-            handler() {
-                const result = {};
-                
-                this.deviceStatuses.forEach((status, ieeeAddr) => {
-                    result[ieeeAddr] = status;
-                });
-                
-                return result;
-            }
-        }
-    }
-});
 
 // Start the broker
 broker.start()

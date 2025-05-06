@@ -44,9 +44,9 @@ interface RoutingTable {
 }
 
 const KEUS_ENDPOINTS_MAP: {[key:number]: number} = {
-    0xaaaa: 15,     // keus devices
-    4648: 1,        // door sensor
-    4125: 1         // yale lock
+    0xaaaa  : 15,     // keus devices
+    4648    : 1,      // door sensor
+    4125    : 1       // yale lock
 }
 
 type CustomReadResponse = (frame: Zcl.Frame, endpoint: Endpoint) => boolean;

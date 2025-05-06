@@ -68,7 +68,7 @@
     "license": "MIT",
     "main": "dist/index.js",
     "types": "dist/index.d.ts",
-    "name": "zigbee-herdsman",
+    "name": "@keus-automation/iot-zigbee-service",
     "repository": {
         "type": "git",
         "url": "git+https://github.com/Koenkk/zigbee-herdsman.git"
@@ -86,7 +86,7 @@
         "prepack": "pnpm run clean && pnpm run build",
         "start:moleculer": "node examples/molecular-service.js"
     },
-    "version": "3.4.11",
+    "version": "0.0.1",
     "pnpm": {
         "onlyBuiltDependencies": [
             "@serialport/bindings-cpp",
