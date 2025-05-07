@@ -1,7 +1,7 @@
 {
     "author": {
-        "name": "Koen Kanters",
-        "email": "koenkanters94@gmail.com"
+        "name": "Akhilesh",
+        "email": "akhilesh@keus.in"
     },
     "bugs": {
         "url": "https://github.com/koenkk/zigbee-herdsman/issues"
@@ -86,7 +86,7 @@
         "prepack": "pnpm run clean && pnpm run build",
         "start:moleculer": "node examples/molecular-service.js"
     },
-    "version": "0.0.1",
+    "version": "0.0.2",
     "pnpm": {
         "onlyBuiltDependencies": [
             "@serialport/bindings-cpp",
