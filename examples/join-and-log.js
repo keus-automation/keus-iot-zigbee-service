@@ -47,7 +47,7 @@ const coordinator = new Controller({
     network: {
        channelList: [26],
     },
-    serialPort: {path: SERIAL},
+    serialPort: {path: SERIAL, adapter: 'zstack'},
     databasePath: DB,
     databaseBackupPath: DB_BACKUP,
     backupPath: ADAPTER_BACKUP,

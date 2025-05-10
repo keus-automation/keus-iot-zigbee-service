@@ -21,6 +21,7 @@ export interface DeviceAnnouncePayload {
 
 export interface DeviceLeavePayload {
     ieeeAddr: string;
+    device: Device;
 }
 
 export interface PermitJoinChangedPayload {
