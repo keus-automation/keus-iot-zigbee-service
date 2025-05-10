@@ -711,7 +711,7 @@ export class Controller extends events.EventEmitter<ControllerEventMap> {
         logger.debug(`Removing green power device from database '${device.ieeeAddr}'`, NS);
         device.removeFromDatabase();
 
-        this.selfAndDeviceEmit(device, 'deviceLeave', {ieeeAddr: device.ieeeAddr});
+        this.selfAndDeviceEmit(device, 'deviceLeave', {ieeeAddr: device.ieeeAddr, device});
     }
 
     private selfAndDeviceEmit<K extends keyof ControllerEventMap>(
