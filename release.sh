@@ -31,6 +31,12 @@ VERSION=$(node -p "require('./package.json').version")
 TAG="v$VERSION"
 echo "🔖 Version: $VERSION"
 
+# Check if tag already exists remotely
+if git ls-remote --tags origin | grep -q "refs/tags/$TAG$"; then
+  echo "⚠️ Tag $TAG already exists on remote. Aborting release."
+  exit 1
+fi
+
 # Create and push Git tag
 echo "🏷️ Creating and pushing tag $TAG..."
 git tag "$TAG"
@@ -43,12 +49,6 @@ if $IS_PRERELEASE; then
 else
   PRERELEASE_FLAG=""
   echo "✅ Marking as full release (main branch)"
-fi
-
-# Check if tag already exists remotely
-if git ls-remote --tags origin | grep -q "refs/tags/$TAG$"; then
-  echo "⚠️ Tag $TAG already exists on remote. Aborting release."
-  exit 1
 fi
 
 # Create GitHub Release
