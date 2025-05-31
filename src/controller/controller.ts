@@ -505,6 +505,13 @@ export class Controller extends events.EventEmitter<ControllerEventMap> {
     }
 
     /**
+     * Create a temporary Group
+     */
+    public createTemporaryGroup(groupID: number): Group {
+        return Group.createTemporaryGroup(groupID);
+    }
+
+    /**
      * Broadcast a network-wide channel change.
      */
     private async changeChannel(oldChannel: number, newChannel: number, nwkUpdateID: number): Promise<void> {
