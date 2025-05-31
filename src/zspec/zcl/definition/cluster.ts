@@ -5359,4 +5359,45 @@ export const Clusters: Readonly<Record<ClusterName, Readonly<ClusterDefinition>>
         },
         commandsResponse: {},
     },
+
+    //Keus
+    keus: {
+        ID: 0x0B21,
+        // manufacturerCode: ManufacturerCode.KEUS,  //this cluster is not manufacturer specific
+        attributes: {},
+        commands: {
+            appMsg: {
+                ID: 1,
+                response: 1,
+                parameters: [
+                    { name: 'clusterId', type: DataType.UINT8 },
+                    { name: 'commandId', type: DataType.UINT8 },
+                    { name: 'dataLen', type: DataType.UINT8 },
+                    { name: 'data', type: BuffaloZclDataType.LIST_UINT8 }
+                ]
+            },
+            appMsgNoRsp: {
+                ID: 2,
+                response: 0,
+                parameters: [
+                    { name: 'clusterId', type: DataType.UINT8 },
+                    { name: 'commandId', type: DataType.UINT8 },
+                    { name: 'dataLen', type: DataType.UINT8 },
+                    { name: 'data', type: BuffaloZclDataType.LIST_UINT8 }
+                ]
+            }
+        },
+        commandsResponse: {
+            appMsgRsp: {
+                ID: 1,
+                parameters: [
+                    { name: 'clusterId', type: DataType.UINT8 },
+                    { name: 'commandId', type: DataType.UINT8 },
+                    { name: 'status', type: DataType.UINT8 },
+                    { name: 'dataLen', type: DataType.UINT8 },
+                    { name: 'data', type: BuffaloZclDataType.LIST_UINT8 }
+                ]
+            }
+        }
+    },
 };

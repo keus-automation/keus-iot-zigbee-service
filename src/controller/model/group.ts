@@ -127,6 +127,20 @@ export class Group extends Entity {
         }
     }
 
+    //CUSTOM
+    public static createTemporaryGroup(groupID: number): Group 
+    {
+        assert(typeof groupID === 'number', 'GroupID must be a number');
+        // Don't allow groupID 0, from the spec:
+        assert(groupID >= 1, 'GroupID must be at least 1');
+
+        
+        const databaseID = 0xFFFF;  //temporary id, will no be saved to database
+        const group = new Group(databaseID, groupID, [], {});
+
+        return group;
+    }
+
     public static create(groupID: number): Group {
         assert(typeof groupID === 'number', 'GroupID must be a number');
         // Don't allow groupID 0, from the spec:

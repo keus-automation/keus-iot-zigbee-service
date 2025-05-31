@@ -50,6 +50,13 @@ export const Endpoints = [
         appnuminclusters: 1,
         appinclusterlist: [Clusters.genOta.ID],
     },
+    {
+        ...EndpointDefaults,
+        endpoint: 15,
+        appprofid: 0x01,
+        appnuminclusters: 1,
+        appinclusterlist: [Clusters.keus.ID]
+    },
     // Insta/Jung/Gira: OTA fallback EP (since it's buggy in firmware 10023202 when it tries to find a matching EP for
     // OTA - it queries for ZLL profile, but then contacts with HA profile)
     {...EndpointDefaults, endpoint: 47, appprofid: 0x0104},

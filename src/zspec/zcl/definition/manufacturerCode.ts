@@ -726,4 +726,7 @@ export enum ManufacturerCode {
     CUSTOM_LIVOLO = 0x1ad2,
     CUSTOM_SPRUT_DEVICE = 0x6666,
     CUSTOM_LYTKO = 0x7777,
+
+    // Keus
+    KEUS = 0xaaaa,
 }

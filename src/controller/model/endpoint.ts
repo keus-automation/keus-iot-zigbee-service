@@ -376,7 +376,7 @@ export class Endpoint extends Entity {
         await this.zclCommand(clusterKey, 'report', payload, options, attributes);
     }
 
-    public async write(clusterKey: number | string, attributes: KeyValue, options?: Options): Promise<void> {
+    public async write(clusterKey: number | string, attributes: KeyValue, options?: Options): Promise<Zcl.Frame | undefined> {
         const cluster = this.getCluster(clusterKey);
         const optionsWithDefaults = this.getOptionsWithDefaults(options, true, Zcl.Direction.CLIENT_TO_SERVER, cluster.manufacturerCode);
         optionsWithDefaults.manufacturerCode = this.ensureManufacturerCodeIsUniqueAndGet(
@@ -398,7 +398,8 @@ export class Endpoint extends Entity {
             }
         }
 
-        await this.zclCommand(clusterKey, optionsWithDefaults.writeUndiv ? 'writeUndiv' : 'write', payload, optionsWithDefaults, attributes, true);
+        const frame = await this.zclCommand(clusterKey, optionsWithDefaults.writeUndiv ? 'writeUndiv' : 'write', payload, optionsWithDefaults, attributes, true);
+        return frame as Zcl.Frame;
     }
 
     public async writeResponse(
@@ -542,7 +543,7 @@ export class Endpoint extends Entity {
         }
     }
 
-    public async bind(clusterKey: number | string, target: Endpoint | Group | number): Promise<void> {
+    public async bind(clusterKey: number | string, target: Endpoint | Group | number): Promise<[Zdo.Status, void | undefined]> {
         const cluster = this.getCluster(clusterKey);
 
         if (typeof target === 'number') {
@@ -575,6 +576,7 @@ export class Endpoint extends Entity {
             }
 
             this.addBindingInternal(cluster, target);
+            return response;
         } catch (error) {
             const err = error as Error;
             err.message = `${log} failed (${err.message})`;
@@ -587,7 +589,7 @@ export class Endpoint extends Entity {
         this.getDevice().save();
     }
 
-    public async unbind(clusterKey: number | string, target: Endpoint | Group | number): Promise<void> {
+    public async unbind(clusterKey: number | string, target: Endpoint | Group | number): Promise<[Zdo.Status, void | undefined]> {
         const cluster = this.getCluster(clusterKey);
         const action = `Unbind ${this.deviceIeeeAddress}/${this.ID} ${cluster.name}`;
 
@@ -607,7 +609,7 @@ export class Endpoint extends Entity {
 
         if (index === -1) {
             logger.debug(`${log} no bind present, skipping.`, NS);
-            return;
+            return [Zdo.Status.SUCCESS, undefined];
         }
 
         logger.debug(log, NS);
@@ -638,6 +640,7 @@ export class Endpoint extends Entity {
 
             this._binds.splice(index, 1);
             this.save();
+            return response;
         } catch (error) {
             const err = error as Error;
             err.message = `${log} failed (${err.message})`;
@@ -658,7 +661,7 @@ export class Endpoint extends Entity {
         await this.zclCommand(clusterID, 'defaultRsp', payload, {direction: Zcl.Direction.SERVER_TO_CLIENT, ...options, transactionSequenceNumber});
     }
 
-    public async configureReporting(clusterKey: number | string, items: ConfigureReportingItem[], options?: Options): Promise<void> {
+    public async configureReporting(clusterKey: number | string, items: ConfigureReportingItem[], options?: Options): Promise<Zcl.Frame | undefined> {
         const cluster = this.getCluster(clusterKey);
         const optionsWithDefaults = this.getOptionsWithDefaults(options, true, Zcl.Direction.CLIENT_TO_SERVER, cluster.manufacturerCode);
         optionsWithDefaults.manufacturerCode = this.ensureManufacturerCodeIsUniqueAndGet(
@@ -692,7 +695,7 @@ export class Endpoint extends Entity {
             };
         });
 
-        await this.zclCommand(clusterKey, 'configReport', payload, optionsWithDefaults, items, true);
+        const frame = await this.zclCommand(clusterKey, 'configReport', payload, optionsWithDefaults, items, true);
 
         for (const e of payload) {
             this._configuredReportings = this._configuredReportings.filter(
@@ -719,6 +722,7 @@ export class Endpoint extends Entity {
         }
 
         this.save();
+        return frame as Zcl.Frame;
     }
 
     public async writeStructured(clusterKey: number | string, payload: KeyValue, options?: Options): Promise<void> {

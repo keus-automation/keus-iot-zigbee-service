@@ -7,5 +7,10 @@ typedoc/
 .remote-sync.json
 tsconfig.tsbuildinfo
 
+pnpm-lock.yaml
+
 # MacOS indexing files
 .DS_Store
+
+#zigbee-data
+.zigbee_data/

@@ -21,3 +21,11 @@ tsconfig.tsbuildinfo
 src
 docs
 temp
+
+#examples
+examples/
+keus-platform-prototype/
+keus/
+
+#data
+.zigbee_data/
