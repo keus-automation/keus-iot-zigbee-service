@@ -1,5 +1,9 @@
 #!/bin/bash
 
+# release.sh - Script to automate version bump, tagging, and publishing to npm
+# Usage: ./release.sh
+# Requires: git, pnpm, gh (GitHub CLI)
+
 set -euo pipefail
 
 # Get current branch
@@ -56,7 +60,8 @@ echo "🚀 Creating GitHub release..."
 gh release create "$TAG" \
   --title "Release $TAG" \
   --generate-notes \
-  $PRERELEASE_FLAG
+  $PRERELEASE_FLAG \
+  --repo "keus-automation/keus-iot-zigbee-service"
 
 # Publish to npm
 echo "📦 Publishing to npm..."
