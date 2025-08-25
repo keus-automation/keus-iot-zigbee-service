@@ -17,4 +17,5 @@ Available examples
 ## Releasing/Publishing
 
 1. Using changeset update the version
-2. run ./release.sh
+    pnpm changeset (fill in the changelogs)
+2. run ./release.sh (use a bash terminal)
