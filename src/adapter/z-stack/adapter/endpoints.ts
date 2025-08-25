@@ -19,7 +19,32 @@ const EndpointDefaults: {
     latencyreq: Constants.AF.networkLatencyReq.NO_LATENCY_REQS,
 };
 
+
 export const Endpoints = [
+    //Custom endpoint definition, sticking to home automation and keus profiles only at supported endpoints
+    {...EndpointDefaults, endpoint: 1, appprofid: 0x0104},
+    {
+        ...EndpointDefaults,
+        endpoint: 11,
+        appprofid: 0x0104,
+        appdeviceid: 0x0400,
+        appnumoutclusters: 2,
+        appoutclusterlist: [Clusters.ssIasZone.ID, Clusters.ssIasWd.ID],
+        appnuminclusters: 2,
+        // genTime required for https://github.com/Koenkk/zigbee2mqtt/issues/10816
+        appinclusterlist: [Clusters.ssIasAce.ID, Clusters.genTime.ID],
+    },
+    {
+        ...EndpointDefaults,
+        endpoint: 15,
+        appprofid: 0x01,
+        appnuminclusters: 1,
+        appinclusterlist: [Clusters.keus.ID]
+    },
+];
+
+//Original herdsman endpoints
+const zhEndpoints = [
     {...EndpointDefaults, endpoint: 1, appprofid: 0x0104},
     {...EndpointDefaults, endpoint: 2, appprofid: 0x0101},
     // Required for https://github.com/Koenkk/zigbee-herdsman-converters/commit/d0fb06c2429171f327950484ea3dec80864637cc
