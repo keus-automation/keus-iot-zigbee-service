@@ -18,3 +18,18 @@ export let logger: Logger = {
 export function setLogger(l: Logger): void {
     logger = l;
 }
+
+export function setLoggingLevels(levels: string[]): void {
+
+    // Update logger methods to respect the new logging levels
+    logger = {
+        debug: (messageOrLambda, namespace) =>
+            levels.includes('debug') && console.debug(`[${new Date().toISOString()}] ${namespace}: ${typeof messageOrLambda === 'function' ? messageOrLambda() : messageOrLambda}`),
+        info: (messageOrLambda, namespace) =>
+            levels.includes('info') && console.info(`[${new Date().toISOString()}] ${namespace}: ${typeof messageOrLambda === 'function' ? messageOrLambda() : messageOrLambda}`),
+        warning: (messageOrLambda, namespace) =>
+            levels.includes('warning') && console.warn(`[${new Date().toISOString()}] ${namespace}: ${typeof messageOrLambda === 'function' ? messageOrLambda() : messageOrLambda}`),
+        error: (message, namespace) => 
+            levels.includes('error') && console.error(`[${new Date().toISOString()}] ${namespace}: ${message}`),
+    };
+}

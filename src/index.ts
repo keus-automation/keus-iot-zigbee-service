@@ -9,4 +9,4 @@ export type * as AdapterTypes from './adapter/tstype';
 export * as Zcl from './zspec/zcl';
 export * as Zdo from './zspec/zdo';
 export * as ZSpec from './zspec';
-export {setLogger} from './utils/logger';
+export {setLogger, setLoggingLevels} from './utils/logger';
