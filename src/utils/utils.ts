@@ -17,3 +17,11 @@ export function isObjectEmpty(object: object): boolean {
     for (const k in object) return false;
     return true;
 }
+
+export const getUint16HighByte = (uint16Num:number) => {
+    return (uint16Num >> 8) & 0xff;
+};
+
+export const getUint16LowByte = (uint16Num:number) => {
+    return uint16Num & 0xff;
+};

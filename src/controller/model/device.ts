@@ -16,6 +16,9 @@ import ZclTransactionSequenceNumber from '../helpers/zclTransactionSequenceNumbe
 import {DatabaseEntry, DeviceType, KeyValue, SendPolicy} from '../tstype';
 import Endpoint from './endpoint';
 import Entity from './entity';
+import { IKeusDeviceMetadata, KeusManufacturers, KEUS_SUPPORTED_ENDPOINTS, KEUS_DEVICE_METADATA } from './keus-device';
+import {getUint16HighByte, getUint16LowByte} from "../../utils/utils";
+
 
 /**
  * @ignore
@@ -41,12 +44,6 @@ interface LQI {
 
 interface RoutingTable {
     table: {destinationAddress: number; status: string; nextHop: number}[];
-}
-
-const KEUS_ENDPOINTS_MAP: {[key:number]: number} = {
-    0xaaaa  : 15,     // keus devices
-    4648    : 1,      // door sensor
-    4125    : 1       // yale lock
 }
 
 type CustomReadResponse = (frame: Zcl.Frame, endpoint: Endpoint) => boolean;
@@ -78,7 +75,7 @@ export class Device extends Entity<ControllerEventMap> {
     private _pendingRequestTimeout: number;
     private _customClusters: CustomClusters = {};
     private _gpSecurityKey?: number[];
-    private _isKeusDevice?: boolean;
+    private _keusMetadata?: IKeusDeviceMetadata;
 
     // Getters/setters
     get ieeeAddr(): string {
@@ -217,11 +214,11 @@ export class Device extends Entity<ControllerEventMap> {
     get gpSecurityKey(): number[] | undefined {
         return this._gpSecurityKey;
     }
-    get isKeusDevice(): boolean {
-        return this._isKeusDevice ?? false;
+    get keusMetadata(): IKeusDeviceMetadata | undefined {
+        return this._keusMetadata;
     }
-    set isKeusDevice(isKeusDevice: boolean) {
-        this._isKeusDevice = isKeusDevice;
+    set keusMetadata(keusMetadata: IKeusDeviceMetadata | undefined) {
+        this._keusMetadata = keusMetadata;
     }
 
     public meta: KeyValue;
@@ -326,7 +323,7 @@ export class Device extends Entity<ControllerEventMap> {
         checkinInterval: number | undefined,
         pendingRequestTimeout: number,
         gpSecurityKey: number[] | undefined,
-        isKeusDevice: boolean
+        keusMetadata: IKeusDeviceMetadata | undefined
     ) {
         super();
         this.ID = ID;
@@ -352,7 +349,7 @@ export class Device extends Entity<ControllerEventMap> {
         this._checkinInterval = checkinInterval;
         this._pendingRequestTimeout = pendingRequestTimeout;
         this._gpSecurityKey = gpSecurityKey;
-        this._isKeusDevice = isKeusDevice;
+        this.keusMetadata = undefined;
     }
 
     public createEndpoint(ID: number): Endpoint {
@@ -600,7 +597,7 @@ export class Device extends Entity<ControllerEventMap> {
             entry.checkinInterval,
             pendingRequestTimeout,
             entry.gpSecurityKey,
-            entry.isKeusDevice
+            entry.keusMetadata
         );
     }
 
@@ -634,7 +631,7 @@ export class Device extends Entity<ControllerEventMap> {
             lastSeen: this.lastSeen,
             checkinInterval: this.checkinInterval,
             gpSecurityKey: this.gpSecurityKey,
-            isKeusDevice: this.isKeusDevice
+            keusMetadata: this.keusMetadata
         };
     }
 
@@ -725,7 +722,7 @@ export class Device extends Entity<ControllerEventMap> {
         modelID: string | undefined,
         interviewCompleted: boolean,
         gpSecurityKey: number[] | undefined,
-        isKeusDevice: boolean = false
+        keusMetadata: IKeusDeviceMetadata | undefined = undefined
     ): Device {
         Device.loadFromDatabaseIfNecessary();
 
@@ -756,7 +753,7 @@ export class Device extends Entity<ControllerEventMap> {
             undefined,
             0,
             gpSecurityKey,
-            isKeusDevice
+            keusMetadata
         );
 
         Entity.database!.insert(device.toDatabaseEntry());
@@ -880,7 +877,7 @@ export class Device extends Entity<ControllerEventMap> {
         }
     }
 
-    private async enrollIasDevice(endpoint: Endpoint, sendPolicy?: SendPolicy): Promise<boolean> {
+    public async enrollIasDevice(endpoint: Endpoint, sendPolicy?: SendPolicy): Promise<boolean> {
         const coordinator = Device.byType('Coordinator')[0];
 
         logger.debug(`Interview - IAS - enrolling '${this.ieeeAddr}' endpoint '${endpoint.ID}'`, NS);
@@ -900,6 +897,7 @@ export class Device extends Entity<ControllerEventMap> {
             // There are 2 enrollment procedures:
             // - Auto enroll: coordinator has to send enrollResponse without receiving an enroll request
             //                this case is handled below.
+
             // - Manual enroll: coordinator replies to enroll request with an enroll response.
             //                  this case in hanled in onZclData().
             // https://github.com/Koenkk/zigbee2mqtt/issues/4569#issuecomment-706075676
@@ -933,62 +931,6 @@ export class Device extends Entity<ControllerEventMap> {
         }
     }
 
-    private checkIfKeusDevice(): boolean {
-        if (!this._manufacturerID) {
-            return false;
-        }
-        
-        const keusEndPoint = KEUS_ENDPOINTS_MAP[this._manufacturerID];
-        return keusEndPoint !== undefined;
-    }
-
-    private async interviewKeusDevice(ignoreCache: boolean): Promise<void> {
-        const keusEndPoint = KEUS_ENDPOINTS_MAP[this._manufacturerID!];
-        
-        logger.debug(`Interviewing Keus device ${this.ieeeAddr}`, NS);
-
-        try {
-            const clusterId = Zdo.ClusterId.SIMPLE_DESCRIPTOR_REQUEST;
-            const zdoPayload = Zdo.Buffalo.buildRequest(Entity.adapter!.hasZdoMessageOverhead, clusterId, this.networkAddress, keusEndPoint);
-            const response = await Entity.adapter!.sendZdo(this.ieeeAddr, this.networkAddress, clusterId, zdoPayload, false);
-
-            if (!Zdo.Buffalo.checkStatus(response)) {
-                throw new Zdo.StatusError(response[0]);
-            }
-
-            const simpleDescriptor = response[1];
-            
-            let endpoint = Endpoint.create(
-                keusEndPoint,
-                simpleDescriptor.profileId,
-                simpleDescriptor.deviceId,
-                simpleDescriptor.inClusterList,
-                simpleDescriptor.outClusterList,
-                this.networkAddress,
-                this.ieeeAddr
-            );
-
-            this._endpoints.push(endpoint);
-            this._isKeusDevice = true;
-            logger.debug(`Keus Interview - got simple descriptor for endpoint '${endpoint.ID}' device '${this.ieeeAddr}'`, NS);
-
-            // IAS setup for door sensor
-            if (keusEndPoint === 1 && this._manufacturerID == 4648) {
-                try {
-                    await this.enrollIasDevice(endpoint);
-                } catch (error) {
-                    logger.error(`Interview failed enrolling IAS device: ${error}`, NS);
-                    throw error;
-                }
-            }
-
-            this.save();
-        } catch (error) {
-            logger.error(`Error with Keus device pairing, Simple Descriptor Request Failed: ${error}`, NS);
-            throw new Error('Keus Interview - Simple Descriptor Failed Or IAS Failed');
-        }
-    }
-
     private async interviewInternal(ignoreCache: boolean): Promise<void> {
         const hasNodeDescriptor = (): boolean => this._manufacturerID !== undefined && this._type !== 'Unknown';
 
@@ -1015,14 +957,15 @@ export class Device extends Entity<ControllerEventMap> {
             throw new Error(`Interview failed because can not get node descriptor ('${this.ieeeAddr}')`);
         }
 
-        // Check if this is a Keus device
-        if (this.checkIfKeusDevice()) {
-            // Use the dedicated interviewKeusDevice function for Keus devices
-            await this.interviewKeusDevice(ignoreCache);
+
+        let {isKeusDevice} = await KeusDevice.processDevice(this);
+        if(isKeusDevice)
+        {
+            //processing already done
+            logger.debug('Interview - Keus device processed, skipping further processing', NS);
+            this.save();
+            logger.debug('Saved keus device successfully', NS);
             return;
-        } else {
-            logger.debug(`Not a Keus device, manufacturer ID: ${this.manufacturerID}`, NS);
-            this._isKeusDevice = false;
         }
 
         if (this.manufacturerID === 4619 && this._type === 'EndDevice') {
@@ -1412,6 +1355,119 @@ export class Device extends Entity<ControllerEventMap> {
         }
         this._customClusters[name] = cluster;
     }
+}
+
+class KeusDevice {
+    
+    constructor() {}
+
+    private static async keusInterview(device: Device): Promise<void> 
+    {
+        try {
+            let keusEndpoint = KEUS_SUPPORTED_ENDPOINTS[device.manufacturerID!].endpoint;
+    
+            
+            let endpoint = Endpoint.create(
+                keusEndpoint,
+                undefined,
+                undefined,
+                [],
+                [],
+                device.networkAddress,
+                device.ieeeAddr
+            );
+            device.endpoints.push(endpoint);
+
+            await endpoint.updateSimpleDescriptor();
+            logger.debug(`Keus Interview - got simple descriptor for endpoint '${endpoint.ID}' device '${device.ieeeAddr}'`, NS);
+            
+            await KeusDevice.keusQuirks(device, endpoint);
+        
+            let keusMetadata = await KeusDevice.identifyDevice(device, endpoint);
+            device.keusMetadata = keusMetadata;
+            
+        }
+        catch(error)
+        {
+            let message = error instanceof Error ? error.message : String(error);
+            logger.error(`Keus Interview - error occurred for device '${device.ieeeAddr}': ${message}`, NS);
+
+            throw new Error(`Keus interview failed for device '${device.ieeeAddr}': ${message}`);
+        }
+    }
+
+    private static async identifyDevice(device: Device, endpoint: Endpoint): Promise<IKeusDeviceMetadata> 
+    {
+        let metadata: IKeusDeviceMetadata = 
+        {
+            deviceType: 0,
+            deviceCategory: 0,
+            endpointId: endpoint.ID,
+            manufacturerCode: 0,
+        };
+
+        // if keus device
+        if (device.manufacturerID == KeusManufacturers.KEUS) 
+        {
+            let keusInfo = endpoint.deviceID;  //category and type info is wrapped in here
+
+            metadata.deviceCategory = getUint16HighByte(keusInfo!);
+            metadata.deviceType = getUint16LowByte(keusInfo!);
+        }
+        else if (device.manufacturerID == KeusManufacturers.DOOR_SENSOR) 
+        {
+            metadata.deviceCategory = 9;
+            metadata.deviceType = 0;
+        }
+        else if (device.manufacturerID == KeusManufacturers.YALE) 
+        {
+            metadata.deviceCategory = 12;
+            metadata.deviceType = 0;
+        }
+
+        //find deviceCategory type in keusDeviceMetadata and fill up in metadata
+        const deviceMetadata = KEUS_DEVICE_METADATA.find(item => 
+            item.dmDeviceCategory === metadata.deviceCategory && 
+            item.dmDeviceType === metadata.deviceType
+        );
+        if (deviceMetadata) {
+            metadata.deviceTypeCode = deviceMetadata.deviceType;
+            metadata.deviceCategoryCode = deviceMetadata.deviceCategory;
+        }
+
+        metadata.manufacturerCode = device.manufacturerID!;
+        
+
+        return metadata;
+    }
+
+    private static async keusQuirks(device: Device, endpoint: Endpoint): Promise<void> 
+    {
+        // IAS setup for door sensor
+        if (device.manufacturerID == 4648 && endpoint.ID == 1) {
+            try {
+                await device.enrollIasDevice(endpoint);
+            } catch (error) {
+                logger.error(`Keus Interview - failed enrolling IAS device: ${error}`, NS);
+                throw error;
+            }
+        }
+    }
+
+    public static async processDevice(device: Device): Promise<{isKeusDevice: boolean}> 
+    {
+        if( device && 
+            device.manufacturerID &&
+            Object.values(KeusManufacturers).includes(device.manufacturerID)
+        ) {
+            await KeusDevice.keusInterview(device);
+
+            return {isKeusDevice: true};
+        }
+
+        return {isKeusDevice: false};
+    }
+
 }
 
 export default Device;
