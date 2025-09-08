@@ -87,7 +87,7 @@
         "prepack": "pnpm run clean && pnpm run build",
         "start:moleculer": "node examples/molecular-service.js"
     },
-    "version": "0.2.1",
+    "version": "0.2.2",
     "pnpm": {
         "onlyBuiltDependencies": [
             "@serialport/bindings-cpp",

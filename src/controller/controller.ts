@@ -22,6 +22,7 @@ import {Device, Entity} from './model';
 import Group from './model/group';
 import Touchlink from './touchlink';
 import {DeviceType, GreenPowerDeviceJoinedPayload, KeyValue} from './tstype';
+import {ZclTransactionSequenceNumber} from './helpers/zclTransactionSequenceNumber';
 
 const NS = 'zh:controller';
 
@@ -1016,6 +1017,55 @@ export class Controller extends events.EventEmitter<ControllerEventMap> {
 
         if (frame) {
             await device.onZclData(payload, frame, endpoint);
+        }
+    }
+
+    public async broadcastCommand(
+        clusterKey: number | string, commandKey: number | string, payload: KeyValue, inputOptions: {srcEndpoint?: number, dstEndpoint?: number}
+    ): Promise<void> {
+        const options = {
+            direction: Zcl.Direction.CLIENT_TO_SERVER,
+            reservedBits: 0,
+            ...inputOptions
+        };
+
+        const cluster = Zcl.Utils.getCluster(clusterKey, undefined, {});
+        const command = cluster.getCommand(commandKey);
+
+        const createLogMessage = (): string => `Broadcast command ${cluster.name}.${command.name}(${JSON.stringify(payload)})`;
+        logger.debug(createLogMessage, NS);
+
+        try {
+            const frame = Zcl.Frame.create(
+                Zcl.FrameType.SPECIFIC,
+                options.direction!,
+                true,
+                undefined,
+                ZclTransactionSequenceNumber.next(),
+                command.ID,
+                cluster.ID,
+                payload,
+                {},
+                0  //reservedBits
+            );
+
+            if(!inputOptions.srcEndpoint || !inputOptions.dstEndpoint) {
+                throw new Error(`${createLogMessage()} failed (srcEndpoint or dstEndpoint not specified in options)`);
+            }
+
+            await this.adapter.sendZclFrameToAll(
+                inputOptions.dstEndpoint,
+                frame,
+                inputOptions.srcEndpoint,
+                ZSpec.BroadcastAddress.DEFAULT
+            );
+        } 
+        catch (error) {
+            const err = error as Error;
+            err.message = `${createLogMessage()} failed (${err.message})`;
+            logger.debug(err.stack!, NS);
+
+            throw error;
         }
     }
 }
