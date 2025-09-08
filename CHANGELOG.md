@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.1
+
+### Patch Changes
+
+- Adding back green power endpoint
+
 ## 0.2.0
 
 ### Minor Changes

@@ -41,6 +41,7 @@ export const Endpoints = [
         appnuminclusters: 1,
         appinclusterlist: [Clusters.keus.ID]
     },
+    {...EndpointDefaults, endpoint: 242, appprofid: 0xa1e0},    //Green power
 ];
 
 //Original herdsman endpoints

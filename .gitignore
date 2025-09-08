@@ -6,6 +6,7 @@ temp/
 typedoc/
 .remote-sync.json
 tsconfig.tsbuildinfo
+.npmrc
 
 pnpm-lock.yaml
 
